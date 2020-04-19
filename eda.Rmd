@@ -1,0 +1,273 @@
+---
+title: "EDA"
+output: html_notebook
+---
+```{r include=FALSE}
+library(forecast)
+library(padr)
+library(treemap)
+library(lubridate)
+```
+
+# `holidays`
+```{r}
+summary(
+  holidays %>% mutate(date = as.Date(date),
+                      type = as.factor(type),
+                      locale = as.factor(locale),
+                      locale_name = as.factor(locale_name))
+        )
+```
+
+```{r}
+holidays %>% filter(type=="Work Day")
+```
+
+```{r}
+holidays %>% group_by(date) %>% summarise(n=n()) %>%
+  filter(n > 1)
+```
+
+No missing value in `holidays`
+```{r}
+colSums(is.na(holidays))
+```
+
+# `items`
+```{r}
+lapply(items, function(x) length(unique(x)))
+```
+No missing value in `items`
+```{r}
+colSums(is.na(items))
+```
+All classes are attached to unique family. We can consider family as a parent set of class.
+```{r}
+items %>% group_by(class) %>%
+  summarise(in_family = length(unique(family))) %>%
+  filter(in_family > 1)
+```
+It seems that all perishable item are having the class between 2000 and 3000
+```{r}
+ggplot(items) +
+  geom_count(aes(y=family, x=class, color = perishable))
+```
+```{r}
+paste("the class of perishable items are between ",
+  min(items[items$perishable != 0,"class"]),
+  " to ",
+  max(items[items$perishable != 0,"class"])
+)
+```
+
+`oil`
+*43 missing value in oil price*
+```{r}
+colSums(is.na(oil))
+```
+combine with `holidays` to check
+```{r}
+oil %>% left_join(holidays, by="date") %>%
+  filter(is.na(dcoilwtico))
+```
+
+PLot gold price over time
+- a sharp fall in the second half of 2014
+- a decresing trend from 2015 to 2016
+- slowing increasing trend starting from 2016
+```{r}
+ggplot(pad(oil %>% mutate(date),interval = "day")) +
+  geom_line(aes(x=date, y=dcoilwtico)) +
+  ggtitle("Oil price between 2013-01-01 and 2017-08-31")
+```
+
+`stores`
+no missing value
+```{r}
+colSums(is.na(stores))
+```
+
+- for citys, Quito (18) and Guayaquil (8) are the most among all
+- for state, Pichincha(19) and Guayas(11) are the most among all
+- only cluster 3,6,10 & 15 has 5 or more observations, the rest could be considered to combine
+```{r}
+lapply(stores[,c(2:5)],function(x) table(x))
+```
+More than 80% state has less than 3 stores
+```{r}
+stores %>% group_by(state) %>% summarise(n=n()) %>% ungroup %>%
+  group_by(Store_nr_in_1_state=n) %>% summarise(count = n()) %>%
+  mutate(perc = count/sum(count)*100) 
+```
+Only 4 states have stores in more than 1 city
+```{r}
+stores %>% group_by(state, city) %>% summarise(nr_store_city=n()) %>% ungroup() %>%
+  group_by(state) %>% mutate(nr_store_state = sum(nr_store_city)) %>% 
+  arrange(-nr_store_state, -nr_store_city) %>% filter(nr_store_city != nr_store_state)
+```
+Only cluster 10 has multiple types, we can consider cluster as a subset of type
+```{r}
+ggplot(stores) +
+  geom_count(aes(x = as.factor(cluster), y=type, color = state)) +
+  scale_x_discrete(name = "Cluster")
+```
+
+`train`
+onpromotion has many missing value => check how onpromotion correlates to other factors
+```{r}
+colSums(is.na(train))
+```
+Number of items on sales by shop
+```{r}
+overall <- train %>% group_by(store_nbr, item_nbr) %>%
+  summarise(total_sales = sum(unit_sales),
+            item_ava = n()) %>%
+  left_join(stores, by="store_nbr") %>%
+  left_join(items, by="item_nbr")
+```
+Total unit sales by shop
+```{r}
+ggplot(overall)+
+  geom_bar(aes(x=store_nbr, y=total_sales, fill = type), stat="identity") +
+  scale_y_continuous(labels = function(x) paste(x/1000000,"M"), 
+                     name = "Total unit sales") +
+  scale_x_discrete(name = "Store") +
+  ggtitle("Number of items on sales by store")
+```
+Obviously, shop with more item avaliable has higher unit sales
+```{r}
+ggplot(overall %>% group_by(store_nbr) %>% 
+         summarise(total_sales = sum(total_sales),
+                   item_ava = sum(item_ava))) +
+  geom_point(aes(x = item_ava, y=total_sales)) +
+  scale_y_continuous(labels = function(x) paste(x/1000000,"M"))+
+  scale_x_continuous(labels = function(x) paste(x/1000000,"M"))
+```
+
+Total unit sales by state
+```{r}
+ggplot(overall)+
+  geom_bar(aes(x=state, y=total_sales, fill = type), stat="identity") +
+  scale_y_continuous(labels = function(x) paste(x/1000000,"M"), 
+                     name = "Total unit sales") +
+  scale_x_discrete(name = "State")+
+  ggtitle("Number of items on sales by state")
+```
+
+Over sales unit by cluster
+```{r}
+ggplot(overall)+
+  geom_bar(aes(x=as.factor(cluster), y=total_sales, fill = type), stat="identity") +
+  scale_y_continuous(labels = function(x) paste(x/1000000,"M"), 
+                     name = "Total unit sales") +
+  scale_x_discrete(name = "Cluster") +
+  ggtitle("Total unit sales by cluster")
+```
+Type A and D have the greatest items on sales
+```{r}
+ggplot(overall)+
+  geom_bar(aes(x=type, y=total_sales), stat="identity") +
+  scale_y_continuous(labels = function(x) paste(x/1000000,"M"), 
+                     name = "Total unit sales") +
+  scale_x_discrete(name = "type") +
+  ggtitle("Number of items on sales by type")
+```
+Grocery I has most item to be sold. Beverages comes to the 2nd.
+```{r}
+ggplot(overall)+
+  geom_bar(aes(x=family, y=total_sales), stat="identity") +
+  scale_y_continuous(labels = function(x) paste(x/1000000,"M"), 
+                     name = "Total unit sales") +
+  scale_x_discrete(name = "family") +
+  ggtitle("Number of items available by family") +
+  coord_flip()
+```
+
+```{r}
+train %>% group_by(year, month) %>% summarise(sales = sum(item_nbr))
+str(train)
+```
+Top 20 items with most unit sales
+```{r}
+ggplot(head(train %>% group_by(item_nbr) %>%
+         summarise(unit_sales = sum(unit_sales)) %>%
+         arrange(-unit_sales),20) %>%
+         left_join(items, by="item_nbr")) +
+  geom_bar( aes(x=reorder(item_nbr, -unit_sales), y=unit_sales, fill = family), stat = "identity") +
+  ggtitle("Top 20 unit sales items") + 
+  scale_y_continuous(labels = function(x) paste(x/1000000,"M"), name = "unit sales") +
+  scale_x_discrete(name = "Item Nr") +
+  coord_flip()
+  
+```
+transaction
+```{r}
+colSums(is.na(trans))
+```
+Total transaction
+- the total number of transcations has an increasing trend
+- the seasonality in 2016 is slight different to other 
+```{r}
+ggplot(trans %>% group_by(month, year) %>% 
+         summarise(trans = sum(transactions)) %>% 
+         ungroup) +
+  geom_line(aes(x=as.numeric(month), y=trans, color = as.factor(year))) +
+  ggtitle("Total number of transactions") +
+  scale_y_continuous(name = "Transactions") +
+  scale_x_continuous(name = "Month",
+                     breaks = seq(1,12,1)) +
+  labs(color = "Year")
+```
+- due to inconsisent unit, we use transaction to estimate the sales performance
+- Dec has a huge number of transcations
+- an obvious drop exists in 2016
+```{r}
+ggplot(trans %>% group_by(month, year) %>% 
+         summarise(trans = sum(transactions),
+                   shop_nr = length(unique(store_nbr)), # remove effect due to newly opened or closed stores
+                   open_day = length(unique(date)), # remove effect due to inconsistance number of days in each month
+                   trans_per_shop = trans/shop_nr/open_day) %>% 
+         ungroup) +
+  geom_line(aes(x=as.numeric(month), y=trans_per_shop, color = as.factor(year))) +
+  ggtitle("Average number of daily transactions per store in each month") +
+  scale_y_continuous(name = "Avg daily transactions per store") +
+  scale_x_continuous(name = "Month",
+                     breaks = seq(1,12,1)) +
+  labs(color = "Year")
+```
+```{r}
+ggplot(trans %>% group_by(wday) %>% 
+         summarise(trans = sum(transactions),
+                   shop_nr = length(unique(store_nbr)), # remove effect due to newly opened or closed stores
+                   open_day = length(unique(date)), # remove effect due to inconsistance number of days
+                   trans_per_shop = trans/shop_nr/open_day) %>% 
+         ungroup) +
+  geom_bar(aes(x=as.factor(wday), y=trans_per_shop), stat = "identity") +
+  geom_text(aes(x = wday, y = 1, label = paste0("(", open_day,")",sep="")),
+            hjust= 0.5, vjust= -2, size = 4, colour = 'black',
+            fontface = 'bold') +
+  ggtitle("Average number of daily transactions per store in each weeday") +
+  scale_y_continuous(name = "Avg daily transactions per store") +
+  scale_x_discrete(name = "Weekday (Opened days)", label = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
+
+```
+It doesn't seem to be a high correlation between oil price and the number of transaction
+```{r}
+ggplot(trans %>% group_by(date) %>% 
+         summarise(trans = sum(transactions),
+                   store_opened = length(unique(store_nbr)),
+                   avg_store_trans = trans / store_opened) %>%
+         mutate(month = month(date),
+                year = year(date)) %>%
+         left_join(oil, by="date")) +
+  geom_point(aes(x=dcoilwtico, y=avg_store_trans, color= as.factor(year)))+
+  facet_wrap(~month)
+```
+Some stores have significant greater amount of transaction.
+```{r}
+ggplot(trans) +
+  geom_smooth(aes(x=date, y=transactions, color=as.factor(store_nbr)), 
+              method = "loess", span = 1/2, se = FALSE) +
+  ggtitle("Total sales per store")
+```
+
